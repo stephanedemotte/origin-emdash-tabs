@@ -77,6 +77,10 @@ await syncTabs(client, { home: tabsFromLabels(homeFields), about: tabsFromLabels
 
 It depends on the editor's DOM (the column and the `field-<slug>` ids), which is not a public API. Check it after an EmDash upgrade.
 
+## Upstream
+
+A core, presentation-only tab layout would replace this plugin and work for sandboxed plugins too. It is proposed in [emdash-cms/emdash#3561](https://github.com/emdash-cms/emdash/discussions/3561).
+
 ## License
 
 MIT
