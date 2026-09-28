@@ -1,0 +1,21 @@
+{
+  "name": "origin-emdash-tabs",
+  "version": "1.0.0",
+  "description": "Tabs in the EmDash entry editor: group a collection's fields into tabs, nothing stored.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Stephane Demotte",
+  "repository": { "type": "git", "url": "git+https://github.com/stephanedemotte/origin-emdash-tabs.git" },
+  "keywords": ["emdash", "emdash-plugin", "cms", "admin", "tabs"],
+  "exports": {
+    ".": "./src/index.js",
+    "./runtime": "./src/runtime.js",
+    "./admin": "./src/admin.js",
+    "./sync": "./src/sync.js"
+  },
+  "files": ["src", "README.md", "LICENSE"],
+  "peerDependencies": {
+    "emdash": ">=1.0.1 <2.0.0",
+    "react": ">=18"
+  }
+}
