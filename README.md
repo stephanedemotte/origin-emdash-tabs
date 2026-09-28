@@ -9,7 +9,7 @@ Requires EmDash 1.x. It is a **native** (trusted) plugin, because the widget is 
 ## Install
 
 ```bash
-bun add github:stephanedemotte/origin-emdash-tabs#v1.0.0
+bun add github:stephanedemotte/origin-emdash-tabs#v1.1.0
 ```
 
 ```js
@@ -50,7 +50,10 @@ A seed only applies to an empty database. For an existing one, `syncTabs` does t
 
 - creates the bar field if it is missing;
 - rewrites its tabs, so they follow your code;
-- moves it first in the editor.
+- moves it first in the editor;
+- records the editor's field order in the options (`order`), so the widget finds every field **by position**.
+
+Finding fields by position matters for fields whose control carries no id: selects, and custom widgets from other plugins. Without `order` (a hand-written seed, for example), such fields stay visible in every tab. Run `syncTabs` once more after adding or reordering fields.
 
 ```js
 import { EmDashClient } from "emdash/client";
@@ -64,10 +67,10 @@ await syncTabs(client, { home: tabsFromLabels(homeFields), about: tabsFromLabels
 
 ## How it works
 
-- **Finding each field.** The editor renders each field as a direct child of one column, and each field's control carries `id="field-<slug>"`:
-  - an image field carries it on its whole block;
-  - a repeater carries it on its sub-fields, `field-<slug>.0.<sub>`.
-- **Hiding the other tabs.** The widget tags that column and hides the blocks of the inactive tabs with CSS `:has()`.
+- **Finding each field.** The editor renders each field as a direct child of one column, in the collection's field order.
+  - **By position:** when `options.order` has exactly one slug per block of that column, blocks are matched with `:nth-child()`. This reaches every field type.
+  - **By id, otherwise:** each field's control carries `id="field-<slug>"`. An image field carries it on its whole block; a repeater carries it on its sub-fields, `field-<slug>.0.<sub>`. Selects and plugin widgets carry none.
+- **Hiding the other tabs.** The widget tags that column and hides the blocks of the inactive tabs with CSS.
 - **Invalid field in a hidden tab.** When a hidden field fails validation, the `invalid` event switches to its tab, so the editor sees why the save is refused.
 - **Remembering the tab.** The open tab is kept per collection for the browser session.
 - **Styling.** Inline, on the admin's theme variables (`--color-kumo-*`), so it follows light and dark mode.

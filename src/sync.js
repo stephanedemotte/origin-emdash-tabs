@@ -1,7 +1,10 @@
 /**
  * Writing the tab bar into an EXISTING database — a seed only applies to an
  * empty one. For each collection: create the bar field if missing, rewrite its
- * tabs (so they follow your code), and move it first in the editor.
+ * tabs (so they follow your code), move it first in the editor, and record the
+ * editor's field order in its options — the widget then finds every field by
+ * position, including those whose control carries no id (selects, widgets of
+ * other plugins).
  *
  *   import { EmDashClient } from "emdash/client";
  *   import { syncTabs } from "origin-emdash-tabs/sync";
@@ -29,13 +32,14 @@ export async function syncTabs(client, byCollection, { slug = DEFAULT_SLUG, labe
   for (const [collection, tabs] of Object.entries(byCollection)) {
     if (!tabs?.length) continue;
     const existing = ((await client.collection(collection)).fields ?? []).map((f) => f.slug);
+    const order = [slug, ...existing.filter((f) => f !== slug)];
     if (!existing.includes(slug)) {
-      await client.createField(collection, { slug, label, type: "json", widget: WIDGET, options: { tabs }, translatable: false, required: false, sortOrder: 0 });
+      await client.createField(collection, { slug, label, type: "json", widget: WIDGET, options: { tabs, order }, translatable: false, required: false, sortOrder: 0 });
     } else {
-      await api("PUT", `schema/collections/${collection}/fields/${slug}`, { widget: WIDGET, options: { tabs }, label });
+      await api("PUT", `schema/collections/${collection}/fields/${slug}`, { widget: WIDGET, options: { tabs, order }, label });
     }
-    const order = ((await client.collection(collection)).fields ?? []).map((f) => f.slug);
-    if (order[0] !== slug) await api("POST", `schema/collections/${collection}/fields/reorder`, { fieldSlugs: [slug, ...order.filter((f) => f !== slug)] });
+    const now = ((await client.collection(collection)).fields ?? []).map((f) => f.slug);
+    if (now.join() !== order.join()) await api("POST", `schema/collections/${collection}/fields/reorder`, { fieldSlugs: order });
     done.push(collection);
   }
   return done;

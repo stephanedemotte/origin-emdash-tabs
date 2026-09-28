@@ -1,11 +1,15 @@
 /**
  * THE TAB BAR — the `origin-emdash-tabs:bar` field widget (see `index.js`).
  *
- * The EmDash editor renders each field as a direct child of one column, and
- * each field's control carries the id `field-<slug>` (an image field: its whole
- * block; a repeater: its sub-fields, `field-<slug>.<i>.<sub>`). The widget tags
- * that column (its own parent) and adds a stylesheet that hides, through
- * `:has()`, the blocks of the inactive tabs. Hidden, not unmounted: what was
+ * The EmDash editor renders each field as a direct child of one column, in the
+ * collection's field order. The widget tags that column (its own parent) and
+ * adds a stylesheet that hides the blocks of the inactive tabs, found:
+ * - BY POSITION when `options.order` (every field slug, in editor order —
+ *   `syncTabs` writes it) matches the column: the only way to reach fields
+ *   whose control carries no id (a select, a plugin's own widget);
+ * - otherwise BY ID: each field's control carries `field-<slug>` (an image
+ *   field: its whole block; a repeater: its sub-fields, `field-<slug>.<i>.<sub>`),
+ *   matched with `:has()`. Hidden, not unmounted: what was
  * typed in a tab stays in the form and is saved with the rest.
  *
  * An invalid field in a hidden tab (a required field left empty) brings its
@@ -38,14 +42,18 @@ const remember = (i) => {
 };
 
 /** The tab of a form element: the tab of the field block it belongs to. */
-const tabOf = (tabs, el) => {
+const tabOf = (tabs, el, order) => {
   const block = el.closest("[data-origin-tabs] > *");
   if (!block) return -1;
+  if (order) {
+    const slug = order[[...block.parentElement.children].indexOf(block)];
+    return tabs.findIndex((t) => t.fields.includes(slug));
+  }
   const ids = [block.id, ...[...block.querySelectorAll("[id^='field-']")].map((e) => e.id)];
   return tabs.findIndex((t) => t.fields.some((s) => ids.some((i) => i === `field-${s}` || i.startsWith(`field-${s}.`))));
 };
 
-/** Every selector that matches the block of field `s` inside column `m`. */
+/** Every selector that matches the block of field `s` inside column `m` (by id). */
 const blockSelectors = (m, s) => [
   `[data-origin-tabs="${m}"] > :has([id="field-${s}"])`,
   `[data-origin-tabs="${m}"] > [id="field-${s}"]`,
@@ -57,13 +65,18 @@ function Bar({ options }) {
   const [active, setActive] = useState(() => Math.min(recall(), Math.max(tabs.length - 1, 0)));
   const root = useRef(null);
   const mark = `t${useId().replace(/[^a-z0-9]/gi, "")}`;
+  // Positional mode, once the column is known to have exactly one block per
+  // slug of `options.order`.
+  const [order, setOrder] = useState(null);
 
   useEffect(() => {
     const column = root.current?.parentElement;
     if (!column) return;
     column.setAttribute("data-origin-tabs", mark);
+    const wanted = Array.isArray(options?.order) ? options.order : null;
+    setOrder(wanted && column.children.length === wanted.length ? wanted : null);
     const onInvalid = (e) => {
-      const i = tabOf(tabs, e.target);
+      const i = tabOf(tabs, e.target, wanted && column.children.length === wanted.length ? wanted : null);
       if (i >= 0) setActive(i);
     };
     column.addEventListener("invalid", onInvalid, true);
@@ -71,15 +84,20 @@ function Bar({ options }) {
       column.removeAttribute("data-origin-tabs");
       column.removeEventListener("invalid", onInvalid, true);
     };
-  }, [mark, tabs]);
+  }, [mark, tabs, options]);
 
   useEffect(() => remember(active), [active]);
 
   if (!tabs.length) return null;
-  const css = tabs
-    .flatMap((t, i) => (i === active ? [] : t.fields))
-    .flatMap((s) => blockSelectors(mark, s))
-    .join(",\n");
+  const hidden = tabs.flatMap((t, i) => (i === active ? [] : t.fields));
+  const css = (
+    order
+      ? hidden
+          .map((s) => order.indexOf(s))
+          .filter((k) => k >= 0)
+          .map((k) => `[data-origin-tabs="${mark}"] > :nth-child(${k + 1})`)
+      : hidden.flatMap((s) => blockSelectors(mark, s))
+  ).join(",\n");
   const line = "1px solid var(--color-kumo-line)";
   const surface = "var(--color-kumo-canvas, var(--color-kumo-base))";
 

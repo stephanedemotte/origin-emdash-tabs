@@ -1,6 +1,6 @@
 {
   "name": "origin-emdash-tabs",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Tabs in the EmDash entry editor: group a collection's fields into tabs, nothing stored.",
   "type": "module",
   "license": "MIT",
