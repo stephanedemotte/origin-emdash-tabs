@@ -8,8 +8,12 @@ import { PLUGIN_ID } from "./index.js";
 export function createPlugin() {
   return definePlugin({
     id: PLUGIN_ID,
-    version: "1.1.0",
+    version: "1.2.0",
     capabilities: [],
-    admin: { fieldWidgets: [{ name: "bar", label: "Tab bar", fieldTypes: ["json"] }] },
+    admin: {
+      fieldWidgets: [{ name: "bar", label: "Tab bar", fieldTypes: ["json"] }],
+      // The settings page (`admin.js` → `pages["/"]`): turn tabs on per collection.
+      pages: [{ path: "/", label: "Tabs" }],
+    },
   });
 }

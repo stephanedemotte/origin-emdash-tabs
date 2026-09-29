@@ -20,7 +20,7 @@ export const DEFAULT_SLUG = "tabs";
 /** The plugin descriptor, for `emdash({ plugins: [tabs()] })`. Native format: the widget is React. */
 export const tabs = () => ({
   id: PLUGIN_ID,
-  version: "1.1.0",
+  version: "1.2.0",
   format: "native",
   entrypoint: fileURLToPath(new URL("./runtime.js", import.meta.url)),
   adminEntry: fileURLToPath(new URL("./admin.js", import.meta.url)),

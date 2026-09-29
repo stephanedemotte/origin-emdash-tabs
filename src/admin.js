@@ -1,31 +1,45 @@
 /**
- * THE TAB BAR — the `origin-emdash-tabs:bar` field widget (see `index.js`).
+ * THE TAB BAR — the `origin-emdash-tabs:bar` field widget (see `index.js`),
+ * and the plugin's settings page.
  *
- * The EmDash editor renders each field as a direct child of one column, in the
- * collection's field order. The widget tags that column (its own parent) and
- * adds a stylesheet that hides the blocks of the inactive tabs, found:
- * - BY POSITION when `options.order` (every field slug, in editor order —
- *   `syncTabs` writes it) matches the column: the only way to reach fields
- *   whose control carries no id (a select, a plugin's own widget);
- * - otherwise BY ID: each field's control carries `field-<slug>` (an image
- *   field: its whole block; a repeater: its sub-fields, `field-<slug>.<i>.<sub>`),
- *   matched with `:has()`. Hidden, not unmounted: what was
- * typed in a tab stays in the form and is saved with the rest.
+ * TWO WAYS TO DECLARE TABS, the first one wins:
  *
- * An invalid field in a hidden tab (a required field left empty) brings its
- * tab back on the `invalid` event; otherwise the editor would not see why
- * nothing saves.
+ * 1. MARKER FIELDS, from the admin. A `json` field whose slug starts with
+ *    `tab_` (Content Types → Add field → JSON, e.g. "Hero" / `tab_hero`) opens
+ *    a tab named by its label; every field after it, up to the next marker,
+ *    belongs to that tab. Fields before the first marker go in a first tab
+ *    (`options.first`, "General" by default). Moving a field to another tab is
+ *    dragging it in the content type's field list. The markers themselves are
+ *    hidden in the editor: they store nothing. No sync step, no token: the bar
+ *    reads the field order itself, with the editor's own session.
+ * 2. A LIST in the bar field's options, `options.tabs: [{ name, fields }]`,
+ *    written by code (`tabsField` in a seed, `syncTabs`).
  *
+ * The bar reads the collection's fields, IN EDITOR ORDER, from the schema API
+ * (`/_emdash/api/schema/collections/<c>?includeFields=true`). With that order
+ * it finds every field's block BY POSITION in the editor column — each field
+ * is a direct child of one column, in that order — which reaches every field
+ * type, including those whose control carries no id (selects, other plugins'
+ * widgets). If the column doesn't match the order (an admin change), it falls
+ * back to ids: a field's control carries `field-<slug>` (an image field: its
+ * whole block; a repeater: its sub-fields, `field-<slug>.<i>.<sub>`).
+ *
+ * Hidden, not unmounted: what was typed in one tab is saved with the rest. An
+ * invalid field in a hidden tab brings its tab back on the `invalid` event.
  * The open tab is remembered per collection for the browser session.
  *
- * Plain `createElement`, no JSX: the file is used as shipped, with no build
- * step in the consuming site. Inline styles on the admin's theme variables
- * (`--color-kumo-*`): the admin's Tailwind is precompiled, a class it does
- * not use itself would not exist.
+ * Plain `createElement`, no JSX: the file is used as shipped. Inline styles on
+ * the admin's theme variables (`--color-kumo-*`): its Tailwind is precompiled.
  */
 import { createElement as h, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Switch } from "@cloudflare/kumo";
 
-const storageKey = () => `origin-emdash-tabs:${location.pathname.split("/content/")[1]?.split("/")[0] ?? ""}`;
+const MARKER_PREFIX = "tab_";
+const WIDGET = "origin-emdash-tabs:bar";
+const FR = typeof document !== "undefined" && /^fr/i.test(document.documentElement.lang || navigator.language || "");
+
+const collectionOfPage = () => (typeof location === "undefined" ? "" : (location.pathname.split("/content/")[1]?.split("/")[0] ?? ""));
+const storageKey = () => `origin-emdash-tabs:${collectionOfPage()}`;
 const recall = () => {
   try {
     return Number(sessionStorage.getItem(storageKey())) || 0;
@@ -39,6 +53,38 @@ const remember = (i) => {
   } catch {
     /* storage unavailable: the tab is simply not remembered */
   }
+};
+
+const api = async (method, path, body) => {
+  const r = await fetch(`/_emdash/api/${path}`, {
+    method,
+    credentials: "same-origin",
+    headers: { Accept: "application/json", "X-EmDash-Request": "1", ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const d = await r.json().catch(() => null);
+  if (!r.ok || d?.success === false) throw new Error(d?.error?.message ?? `${r.status}`);
+  return d?.data ?? d;
+};
+
+/** The collection's fields in editor order: `[{ slug, label, type }]`. */
+const fieldsOf = async (collection) => {
+  const { item } = await api("GET", `schema/collections/${encodeURIComponent(collection)}?includeFields=true`);
+  return (item?.fields ?? []).map((f) => ({ slug: f.slug, label: f.label ?? f.slug, type: f.type }));
+};
+
+const isMarker = (f) => f.type === "json" && f.slug.startsWith(MARKER_PREFIX);
+
+/** Tabs from marker fields; `[]` when the collection has none. */
+const tabsFromMarkers = (fields, barSlug, firstName) => {
+  if (!fields.some(isMarker)) return [];
+  const tabs = [{ name: firstName, fields: [] }];
+  for (const f of fields) {
+    if (f.slug === barSlug) continue;
+    if (isMarker(f)) tabs.push({ name: f.label, fields: [] });
+    else tabs[tabs.length - 1].fields.push(f.slug);
+  }
+  return tabs.filter((t, i) => i > 0 || t.fields.length);
 };
 
 /** The tab of a form element: the tab of the field block it belongs to. */
@@ -60,23 +106,40 @@ const blockSelectors = (m, s) => [
   `[data-origin-tabs="${m}"] > :has([id^="field-${s}."])`,
 ];
 
-function Bar({ options }) {
-  const tabs = useMemo(() => (Array.isArray(options?.tabs) ? options.tabs.filter((t) => t && Array.isArray(t.fields)) : []), [options]);
-  const [active, setActive] = useState(() => Math.min(recall(), Math.max(tabs.length - 1, 0)));
+function Bar({ options, id }) {
+  const barSlug = String(id ?? "").replace(/^field-/, "");
+  const firstName = options?.first ?? (FR ? "Général" : "General");
+  const [fields, setFields] = useState(null); // the collection's fields, editor order
+  useEffect(() => {
+    let live = true;
+    const c = collectionOfPage();
+    if (c) fieldsOf(c).then((f) => live && setFields(f)).catch(() => live && setFields([]));
+    return () => (live = false);
+  }, []);
+
+  const markers = useMemo(() => (fields ?? []).filter(isMarker).map((f) => f.slug), [fields]);
+  const tabs = useMemo(() => {
+    const fromMarkers = tabsFromMarkers(fields ?? [], barSlug, firstName);
+    if (fromMarkers.length) return fromMarkers;
+    return Array.isArray(options?.tabs) ? options.tabs.filter((t) => t && Array.isArray(t.fields)) : [];
+  }, [fields, options, barSlug, firstName]);
+
+  const [active, setActive] = useState(() => recall());
   const root = useRef(null);
   const mark = `t${useId().replace(/[^a-z0-9]/gi, "")}`;
-  // Positional mode, once the column is known to have exactly one block per
-  // slug of `options.order`.
+  // Positional mode: the column has exactly one block per field, in order.
   const [order, setOrder] = useState(null);
 
   useEffect(() => {
     const column = root.current?.parentElement;
     if (!column) return;
     column.setAttribute("data-origin-tabs", mark);
-    const wanted = Array.isArray(options?.order) ? options.order : null;
-    setOrder(wanted && column.children.length === wanted.length ? wanted : null);
+    const fromSchema = fields?.length ? fields.map((f) => f.slug) : null;
+    const fromOptions = Array.isArray(options?.order) ? options.order : null;
+    const wanted = [fromSchema, fromOptions].find((o) => o && column.children.length === o.length) ?? null;
+    setOrder(wanted);
     const onInvalid = (e) => {
-      const i = tabOf(tabs, e.target, wanted && column.children.length === wanted.length ? wanted : null);
+      const i = tabOf(tabs, e.target, wanted);
       if (i >= 0) setActive(i);
     };
     column.addEventListener("invalid", onInvalid, true);
@@ -84,12 +147,14 @@ function Bar({ options }) {
       column.removeAttribute("data-origin-tabs");
       column.removeEventListener("invalid", onInvalid, true);
     };
-  }, [mark, tabs, options]);
+  }, [mark, tabs, options, fields]);
 
-  useEffect(() => remember(active), [active]);
+  const current = Math.min(active, Math.max(tabs.length - 1, 0));
+  useEffect(() => remember(current), [current]);
 
   if (!tabs.length) return null;
-  const hidden = tabs.flatMap((t, i) => (i === active ? [] : t.fields));
+  // The inactive tabs' fields, and the markers always: they store nothing.
+  const hidden = [...tabs.flatMap((t, i) => (i === current ? [] : t.fields)), ...markers];
   const css = (
     order
       ? hidden
@@ -109,11 +174,11 @@ function Bar({ options }) {
       "div",
       { role: "tablist", "aria-label": "Sections", style: { display: "flex", flexWrap: "wrap", gap: 4 } },
       tabs.map((t, i) => {
-        const on = i === active;
+        const on = i === current;
         return h(
           "button",
           {
-            key: t.name,
+            key: `${i}:${t.name}`,
             type: "button",
             role: "tab",
             "aria-selected": on,
@@ -138,4 +203,98 @@ function Bar({ options }) {
   );
 }
 
+// ——— The settings page: turn tabs on per collection ———
+
+const P = FR
+  ? {
+      title: "Onglets",
+      intro: "Active la barre d'onglets sur une collection, puis, dans Content Types, ajoute un champ JSON par onglet : son libellé est le nom de l'onglet, son slug commence par « tab_ » (ex. « Hero » / tab_hero). Tous les champs placés après lui, jusqu'au prochain, forment l'onglet ; glisse-les dans la liste des champs pour les ranger.",
+      loading: "Chargement…",
+      error: "Échec :",
+      tabs: (n) => (n ? `${n} onglet${n > 1 ? "s" : ""} (champs tab_…)` : "aucun champ tab_… pour l'instant"),
+      byCode: "onglets définis par le code (options.tabs)",
+    }
+  : {
+      title: "Tabs",
+      intro: 'Turn the tab bar on for a collection, then, in Content Types, add one JSON field per tab: its label is the tab\'s name and its slug starts with "tab_" (e.g. "Hero" / tab_hero). Every field after it, up to the next one, belongs to that tab; drag fields in the field list to arrange them.',
+      loading: "Loading…",
+      error: "Failed:",
+      tabs: (n) => (n ? `${n} tab${n > 1 ? "s" : ""} (tab_… fields)` : "no tab_… field yet"),
+      byCode: "tabs defined in code (options.tabs)",
+    };
+
+function Settings() {
+  const [rows, setRows] = useState(null); // [{ slug, label, bar, markers, byCode, order }]
+  const [busy, setBusy] = useState({});
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    const { items } = await api("GET", "schema/collections");
+    const out = [];
+    for (const c of items ?? []) {
+      const { item } = await api("GET", `schema/collections/${encodeURIComponent(c.slug)}?includeFields=true`);
+      const fs = item?.fields ?? [];
+      const bar = fs.find((f) => f.widget === WIDGET);
+      out.push({
+        slug: c.slug,
+        label: c.label,
+        bar: bar?.slug ?? null,
+        markers: fs.filter((f) => f.type === "json" && f.slug.startsWith(MARKER_PREFIX)).length,
+        byCode: Array.isArray(bar?.options?.tabs) && bar.options.tabs.length > 0,
+        order: fs.map((f) => f.slug),
+      });
+    }
+    setRows(out);
+  };
+  useEffect(() => {
+    load().catch((e) => (setError(`${P.error} ${e.message}`), setRows([])));
+  }, []);
+
+  const toggle = async (r, on) => {
+    setBusy((b) => ({ ...b, [r.slug]: true }));
+    setError("");
+    try {
+      if (on) {
+        await api("POST", `schema/collections/${encodeURIComponent(r.slug)}/fields`, { slug: "tabs", label: "Tabs", type: "json", widget: WIDGET, translatable: false, required: false, sortOrder: 0 });
+        await api("POST", `schema/collections/${encodeURIComponent(r.slug)}/fields/reorder`, { fieldSlugs: ["tabs", ...r.order.filter((s) => s !== "tabs")] });
+      } else if (r.bar) {
+        await api("DELETE", `schema/collections/${encodeURIComponent(r.slug)}/fields/${encodeURIComponent(r.bar)}`);
+      }
+      await load();
+    } catch (e) {
+      setError(`${P.error} ${e.message}`);
+    } finally {
+      setBusy((b) => ({ ...b, [r.slug]: false }));
+    }
+  };
+
+  const line = "1px solid var(--color-kumo-line)";
+  return h(
+    "div",
+    { style: { maxWidth: 760, display: "grid", gap: 20 } },
+    h("div", null, h("h1", { style: { fontSize: 22, fontWeight: 600, margin: 0 } }, P.title), h("p", { style: { marginTop: 6, opacity: 0.7, fontSize: 14, lineHeight: 1.5 } }, P.intro)),
+    error ? h("p", { role: "alert", style: { color: "var(--text-color-kumo-danger, #d33)", fontSize: 14, margin: 0 } }, error) : null,
+    rows === null
+      ? h("p", { style: { opacity: 0.6 } }, P.loading)
+      : h(
+          "section",
+          { style: { border: line, borderRadius: 10, overflow: "hidden" } },
+          rows.map((r, i) =>
+            h(
+              "div",
+              { key: r.slug, style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "12px 16px", borderTop: i ? line : "none" } },
+              h(
+                "div",
+                { style: { minWidth: 0 } },
+                h("div", { style: { fontSize: 14, fontWeight: 500 } }, r.label),
+                h("div", { style: { fontSize: 12, opacity: 0.6 } }, `${r.slug}${r.bar ? ` · ${r.markers ? P.tabs(r.markers) : r.byCode ? P.byCode : P.tabs(0)}` : ""}`),
+              ),
+              h(Switch, { checked: Boolean(r.bar), disabled: Boolean(busy[r.slug]), onCheckedChange: (on) => toggle(r, on), "aria-label": r.label }),
+            ),
+          ),
+        ),
+  );
+}
+
 export const fields = { bar: Bar };
+export const pages = { "/": Settings };

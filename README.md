@@ -2,14 +2,14 @@
 
 Tabs in the [EmDash](https://github.com/emdash-cms/emdash) entry editor.
 
-EmDash stacks every field of an entry in one long column. This plugin groups a collection's fields into tabs (for example Hero / Intro / Gallery / Footer) with a bar at the top of the editor. Nothing is stored: the tab bar lives on an empty `json` field, and switching tabs only hides the other fields. What an editor typed in one tab is saved with the rest.
+EmDash stacks every field of an entry in one long column. This plugin groups a collection's fields into tabs (for example Hero / Intro / Gallery / Footer) with a bar at the top of the editor. Nothing is stored and nothing changes in your content: switching tabs only hides the other fields, and what an editor typed in one tab is saved with the rest.
 
-Requires EmDash 1.x. It is a **native** (trusted) plugin, because the widget is React, so it is installed from git rather than from the EmDash plugin registry, which only takes sandboxed plugins.
+Requires EmDash 1.x. It is a **native** (trusted) plugin, because the widget is React. It is installed from git, not from the EmDash plugin registry: the registry only takes sandboxed plugins.
 
 ## Install
 
 ```bash
-bun add github:stephanedemotte/origin-emdash-tabs#v1.1.0
+bun add github:stephanedemotte/origin-emdash-tabs#v1.2.0
 ```
 
 ```js
@@ -20,62 +20,49 @@ import { tabs } from "origin-emdash-tabs";
 emdash({ plugins: [tabs()] });
 ```
 
-## Declare the tabs
+## Use it from the admin (no code)
 
-The tabs of a collection live in the `options.tabs` of its bar field: `[{ name, fields: [slugs] }]`. There are two helpers to build them.
+1. **Turn the bar on for a collection.** Go to Plugins → **Tabs**, where each collection has a switch. It adds the bar field at the top of the collection.
+2. **Add a tab.** Go to Content Types → your collection → **Add field** → **JSON**:
+   - its **label** is the tab's name, for example `Hero`;
+   - its **slug** starts with `tab_`, for example `tab_hero`.
+3. **Put fields in it.** Every field placed after a `tab_…` field, up to the next one, is in that tab. Fields before the first `tab_…` field go in a first tab, "General". To move a field to another tab, drag it in the content type's field list.
 
-`tabsFromLabels(fields)` derives the tabs from field labels. Each field goes in:
+The `tab_…` fields are hidden in the editor and store nothing. There is no sync step and no token: the bar reads the collection's field order from the schema API each time the editor opens, with the editor's own session.
 
-1. the tab named by its `tab` property, if it has one;
-2. otherwise the tab given by its label prefix: `"Hero — title"` goes in `Hero`;
-3. otherwise the tab of the field before it.
+## Or declare the tabs in code
 
-The first tab is `General`. When there would be only one tab, it returns `[]`: no bar.
+In a seed, put the bar first and the markers where the tabs start:
 
 ```js
-import { tabsFromLabels, tabsField } from "origin-emdash-tabs";
-
 const fields = [
-  { slug: "title", label: "Page title", type: "string" },
-  { slug: "hero_title", label: "Hero — title", type: "string" },
-  { slug: "hero_image", label: "Hero — image", type: "image" },
-  { slug: "body", label: "Text", type: "portableText", tab: "Content" },
+  { slug: "tabs", label: "Tabs", type: "json", widget: "origin-emdash-tabs:bar", options: { first: "General" } },
+  { slug: "title", label: "Title", type: "string" },
+  { slug: "tab_hero", label: "Hero", type: "json" },
+  { slug: "hero_title", label: "Title", type: "string" },
+  { slug: "hero_image", label: "Image", type: "image" },
 ];
-
-// in a seed: put the bar FIRST
-const collection = { slug: "home", fields: [...tabsField(tabsFromLabels(fields)), ...fields] };
 ```
 
-A seed only applies to an empty database. For an existing one, `syncTabs` does the work:
+Keep the fields in that order in every environment, since the order is what decides which field is in which tab. A seed only applies to an empty database; for an existing one, create any missing fields and reorder them. EmDash's REST routes for that are `POST /_emdash/api/schema/collections/<c>/fields` and `…/fields/reorder`.
 
-- creates the bar field if it is missing;
-- rewrites its tabs, so they follow your code;
-- moves it first in the editor;
-- records the editor's field order in the options (`order`), so the widget finds every field **by position**.
+**Bar options:** `first` sets the name of the first tab, before any `tab_…` field. It defaults to "General".
 
-Finding fields by position matters for fields whose control carries no id: selects, and custom widgets from other plugins. Without `order` (a hand-written seed, for example), such fields stay visible in every tab. Run `syncTabs` once more after adding or reordering fields.
+### Legacy: a list of tabs in the bar's options
 
-```js
-import { EmDashClient } from "emdash/client";
-import { syncTabs } from "origin-emdash-tabs/sync";
-
-const client = new EmDashClient({ baseUrl: "https://example.com", token: process.env.EMDASH_TOKEN });
-await syncTabs(client, { home: tabsFromLabels(homeFields), about: tabsFromLabels(aboutFields) });
-```
-
-`syncTabs` needs an admin token (schema writes). Run it after each deploy that changes the tabs.
+Versions 1.0–1.1 declared the tabs as a list in the bar field's options, `options.tabs: [{ name, fields: [slugs] }]`, written with `tabsFromLabels` / `tabsField` and kept in sync with `syncTabs` (`origin-emdash-tabs/sync`). This still works; `tab_…` fields take precedence when a collection has any.
 
 ## How it works
 
 - **Finding each field.** The editor renders each field as a direct child of one column, in the collection's field order.
-  - **By position:** when `options.order` has exactly one slug per block of that column, blocks are matched with `:nth-child()`. This reaches every field type.
-  - **By id, otherwise:** each field's control carries `id="field-<slug>"`. An image field carries it on its whole block; a repeater carries it on its sub-fields, `field-<slug>.0.<sub>`. Selects and plugin widgets carry none.
-- **Hiding the other tabs.** The widget tags that column and hides the blocks of the inactive tabs with CSS.
+  - **By position:** with the field order read from the schema API, blocks are matched with `:nth-child()`. This reaches every field type, including selects and other plugins' widgets, which carry no id.
+  - **By id, when the column doesn't match the order:** each field's control carries `id="field-<slug>"`. An image field carries it on its whole block; a repeater carries it on its sub-fields, `field-<slug>.0.<sub>`.
+- **Hiding.** The bar tags that column and hides the inactive tabs' blocks, and the `tab_…` markers, with CSS.
 - **Invalid field in a hidden tab.** When a hidden field fails validation, the `invalid` event switches to its tab, so the editor sees why the save is refused.
 - **Remembering the tab.** The open tab is kept per collection for the browser session.
 - **Styling.** Inline, on the admin's theme variables (`--color-kumo-*`), so it follows light and dark mode.
 
-It depends on the editor's DOM (the column and the `field-<slug>` ids), which is not a public API. Check it after an EmDash upgrade.
+It depends on the editor's DOM (the field column), which is not a public API. Check it after an EmDash upgrade.
 
 ## Upstream
 
