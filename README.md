@@ -28,7 +28,7 @@ emdash({ plugins: [tabs()] });
    - its **slug** starts with `tab_`, for example `tab_hero`.
 3. **Put fields in it.** Every field placed after a `tab_…` field, up to the next one, is in that tab. Fields before the first `tab_…` field go in a first tab, "General". To move a field to another tab, drag it in the content type's field list.
 
-The `tab_…` fields are hidden in the editor and store nothing. There is no sync step and no token: the bar reads the collection's field order from the schema API each time the editor opens, with the editor's own session.
+The `tab_…` fields are hidden in the editor and store nothing. There is no sync step and no token: the bar reads the markers from the editor itself each time it opens, before the first paint, so the tabs are there from the first frame.
 
 ## Or declare the tabs in code
 
@@ -55,7 +55,7 @@ Versions 1.0–1.1 declared the tabs as a list in the bar field's options, `opti
 ## How it works
 
 - **Finding each field.** The editor renders each field as a direct child of one column, in the collection's field order.
-  - **By position:** with the field order read from the schema API, blocks are matched with `:nth-child()`. This reaches every field type, including selects and other plugins' widgets, which carry no id.
+  - **By position:** the bar reads the column itself, before the first paint, and groups its blocks between `tab_…` markers. It matches them with `:nth-child()`, which reaches every field type, including selects and other plugins' widgets, which carry no id. If no marker can be read from the column, it falls back to the field order from the schema API.
   - **By id, when the column doesn't match the order:** each field's control carries `id="field-<slug>"`. An image field carries it on its whole block; a repeater carries it on its sub-fields, `field-<slug>.0.<sub>`.
 - **Hiding.** The bar tags that column and hides the inactive tabs' blocks, and the `tab_…` markers, with CSS.
 - **Invalid field in a hidden tab.** When a hidden field fails validation, the `invalid` event switches to its tab, so the editor sees why the save is refused.
