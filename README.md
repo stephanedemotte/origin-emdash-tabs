@@ -9,7 +9,7 @@ Requires EmDash 1.x. It is a **native** (trusted) plugin, because the widget is 
 ## Install
 
 ```bash
-bun add github:stephanedemotte/origin-emdash-tabs#v1.2.0
+bun add github:stephanedemotte/origin-emdash-tabs#v1.2.1
 ```
 
 ```js

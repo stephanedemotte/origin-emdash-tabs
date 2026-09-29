@@ -1,6 +1,6 @@
 {
   "name": "origin-emdash-tabs",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Tabs in the EmDash entry editor: add a tab_ field in Content Types, drag fields under it.",
   "type": "module",
   "license": "MIT",

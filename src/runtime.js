@@ -8,7 +8,7 @@ import { PLUGIN_ID } from "./index.js";
 export function createPlugin() {
   return definePlugin({
     id: PLUGIN_ID,
-    version: "1.2.0",
+    version: "1.2.1",
     capabilities: [],
     admin: {
       fieldWidgets: [{ name: "bar", label: "Tab bar", fieldTypes: ["json"] }],

@@ -15,8 +15,11 @@
  * 2. A LIST in the bar field's options, `options.tabs: [{ name, fields }]`,
  *    written by code (`tabsField` in a seed, `syncTabs`).
  *
- * The bar reads the collection's fields, IN EDITOR ORDER, from the schema API
- * (`/_emdash/api/schema/collections/<c>?includeFields=true`). With that order
+ * The bar reads the collection's fields IN EDITOR ORDER — from the editor
+ * column itself, before the first paint (so the tabs are there from the first
+ * frame, nothing jumps), and from the schema API
+ * (`/_emdash/api/schema/collections/<c>?includeFields=true`) only when the
+ * column shows no marker. With that order
  * it finds every field's block BY POSITION in the editor column — each field
  * is a direct child of one column, in that order — which reaches every field
  * type, including those whose control carries no id (selects, other plugins'
@@ -31,7 +34,7 @@
  * Plain `createElement`, no JSX: the file is used as shipped. Inline styles on
  * the admin's theme variables (`--color-kumo-*`): its Tailwind is precompiled.
  */
-import { createElement as h, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createElement as h, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Switch } from "@cloudflare/kumo";
 
 const MARKER_PREFIX = "tab_";
@@ -75,6 +78,33 @@ const fieldsOf = async (collection) => {
 
 const isMarker = (f) => f.type === "json" && f.slug.startsWith(MARKER_PREFIX);
 
+/**
+ * The collection's fields as the EDITOR shows them, read from the column
+ * itself: one entry per block, in order, `{ slug, label, type }` — `type` is
+ * `"json"` for a `tab_…` marker (its control carries `field-tab_…`), unknown
+ * otherwise. Read in a layout effect, before the first paint, so the tabs are
+ * there from the first frame: no fields flashing, then disappearing.
+ */
+const fieldsOfColumn = (column, bar, barSlug) =>
+  [...column.children].map((block, i) => {
+    // The bar's own block is the bar; a block whose control carries no id (a
+    // select, another plugin's widget) gets a positional key — tabs group
+    // blocks by position between markers, so a name isn't needed.
+    if (bar && block.contains(bar)) return { slug: barSlug, label: "", type: "json" };
+    const ids = [block.id, ...[...block.querySelectorAll("[id^='field-']")].map((e) => e.id)].filter((x) => x?.startsWith("field-"));
+    const slug = (ids[0] ?? "").replace(/^field-/, "").split(".")[0] || `#${i}`;
+    return { slug, label: labelOf(block) || slug, type: slug.startsWith(MARKER_PREFIX) ? "json" : undefined };
+  });
+
+/** A field block's label, without the admin's "(optional)" / "*" markers. */
+const labelOf = (block) => {
+  const label = block.querySelector("label");
+  if (!label) return "";
+  const copy = label.cloneNode(true);
+  for (const el of copy.querySelectorAll("*")) if (/^(\(.*\)|\*)$/.test(el.textContent.trim())) el.remove();
+  return copy.textContent.replace(/\s+/g, " ").trim();
+};
+
 /** Tabs from marker fields; `[]` when the collection has none. */
 const tabsFromMarkers = (fields, barSlug, firstName) => {
   if (!fields.some(isMarker)) return [];
@@ -110,7 +140,13 @@ function Bar({ options, id }) {
   const barSlug = String(id ?? "").replace(/^field-/, "");
   const firstName = options?.first ?? (FR ? "Général" : "General");
   const [fields, setFields] = useState(null); // the collection's fields, editor order
-  useEffect(() => {
+  const root = useRef(null);
+  // First, from the editor column (before paint). The schema API is only the
+  // fallback, for a column whose markers can't be read (no marker found there).
+  useLayoutEffect(() => {
+    const column = root.current?.parentElement;
+    const dom = column ? fieldsOfColumn(column, root.current, barSlug) : [];
+    if (dom.some(isMarker)) return void setFields(dom);
     let live = true;
     const c = collectionOfPage();
     if (c) fieldsOf(c).then((f) => live && setFields(f)).catch(() => live && setFields([]));
@@ -125,12 +161,11 @@ function Bar({ options, id }) {
   }, [fields, options, barSlug, firstName]);
 
   const [active, setActive] = useState(() => recall());
-  const root = useRef(null);
   const mark = `t${useId().replace(/[^a-z0-9]/gi, "")}`;
   // Positional mode: the column has exactly one block per field, in order.
   const [order, setOrder] = useState(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const column = root.current?.parentElement;
     if (!column) return;
     column.setAttribute("data-origin-tabs", mark);
@@ -152,7 +187,8 @@ function Bar({ options, id }) {
   const current = Math.min(active, Math.max(tabs.length - 1, 0));
   useEffect(() => remember(current), [current]);
 
-  if (!tabs.length) return null;
+  // Until the fields are read, an empty placeholder: the ref needs a node.
+  if (!tabs.length) return h("div", { ref: root, hidden: fields !== null });
   // The inactive tabs' fields, and the markers always: they store nothing.
   const hidden = [...tabs.flatMap((t, i) => (i === current ? [] : t.fields)), ...markers];
   const css = (
